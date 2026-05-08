@@ -27,7 +27,9 @@
 
 ## 1. Project Description
 
-**Merezha** is a decentralized compute marketplace on an EVM-compatible blockchain. Anyone can post a computational task with a reward denominated in ETH. Anyone else can act as a worker, execute the task off-chain, and submit the result on-chain to claim the reward.
+**Merezha** is a decentralized compute network on an EVM-compatible blockchain. Anyone can post a computational task with a reward denominated in ETH. Anyone else can act as a worker, execute the task off-chain, and submit the result on-chain to claim the reward.
+
+Originally conceived as an academic **computational** network: to make it easier for research groups to collaborate and run large workloads on shared, distributed infrastructure. Compared with fully anonymous grids, participation can stay more accountable (known institutions or members), which mitigates some security concerns that anonymity introduces. The same design also works as an open marketplace where anyone pays ETH for compute. This project is a proof of concept of that general idea.
 
 The key design question any such system must answer is: *how do you verify that a submitted result is actually correct?* Most existing systems hard-code a single answer to this question, which means the protocol becomes stale as verification technology evolves.
 
@@ -83,8 +85,8 @@ Today, zkML (zero-knowledge proofs of machine learning inference) is an active r
 │  ┌──────────────────────────────────────┐         │              │
 │  │        ComputeMarketplace            │─────────┘              │
 │  │                                      │  calls verify()        │
-│  │  postTask(payload, verifier, params, │                        │
-│  │           reward, deadline)          │                        │
+│  │  postTask(payload, verifier, params,│                        │
+│  │           deadline, refundDeadline)  │                        │
 │  │  submitResult(taskId, result)        │                        │
 │  │  finalize(taskId)                    │                        │
 │  │  refund(taskId)                      │                        │
@@ -165,14 +167,14 @@ merezha/
 │   └── ezkl/
 │       └── IrisVerifier.sol      # EZKL-generated (do not edit manually)
 │
-├── test/                         # Hardhat tests (TypeScript)
-│   ├── ComputeMarketplace.test.ts
-│   ├── HashVerifier.test.ts
-│   └── ZkMlVerifier.test.ts
-│
-├── scripts/                      # Hardhat deploy scripts
-│   ├── deploy.ts                 # deploys all contracts
-│   └── register-verifiers.ts    # registers verifiers in registry
+├── foundry.toml                  # Forge: build, test, script runner
+├── script/                       # Foundry deployment scripts (Solidity)
+│   ├── Deploy.s.sol              # deploys core contracts
+│   └── RegisterVerifiers.s.sol   # registers verifiers in the registry
+├── test/                         # Forge tests (Solidity .t.sol)
+│   ├── ComputeMarketplace.t.sol
+│   ├── HashVerifier.t.sol
+│   └── ZkMlVerifier.t.sol
 │
 ├── worker/                       # Python worker process
 │   ├── worker.py                 # main worker entrypoint
@@ -192,8 +194,6 @@ merezha/
 ├── frontend/
 │   └── index.html                # single-file frontend
 │
-├── hardhat.config.ts
-├── package.json
 ├── .env.example
 └── README.md
 ```
@@ -327,57 +327,68 @@ event VerifierUnregistered(string name);
 
 The core marketplace contract. Holds ETH in escrow, coordinates task lifecycle.
 
+**Constructor:** `constructor(address registry_, address forfeitSink_)`
+- `registry_`: optional `VerifierRegistry` for `postTaskWithRegisteredVerifier`; use `address(0)` if unused.
+- `forfeitSink_`: recipient of escrow for abandoned `Open` tasks after the refund window; use `address(0)` for the default burn address (`0x…dEaD`).
+
 **Structs:**
 ```solidity
-enum TaskStatus { Open, Submitted, Finalized, Refunded }
+enum TaskStatus { Open, Submitted, Finalized, Refunded, Forfeited }
 
 struct Task {
-    address poster;           // who posted the task
-    address worker;           // who submitted a result (address(0) if none)
-    address verifier;         // IVerifier contract address
-    bytes payload;            // off-chain task description (JSON bytes)
-    bytes verificationParams; // passed to verifier.verify()
-    bytes submittedResult;    // worker's submission
-    uint256 reward;           // ETH in escrow (wei)
-    uint256 deadline;         // unix timestamp; after this poster can refund
+    address poster;
+    address worker;
+    address verifier;         // must be a contract (has code)
+    bytes payload;
+    bytes verificationParams;
+    bytes submittedResult;
+    uint256 reward;
+    uint256 deadline;          // last moment workers may submitResult
+    uint256 refundDeadline;    // last moment poster may refund (must be > deadline)
     TaskStatus status;
 }
 ```
 
 **State:**
 ```solidity
+VerifierRegistry public immutable verifierRegistry;
+address public immutable forfeitSink;
 mapping(uint256 => Task) public tasks;
 uint256 public nextTaskId;
 ```
 
 **Functions:**
 ```solidity
-/// @notice Post a new task. msg.value becomes the reward held in escrow.
-/// @param  payload            JSON bytes describing the task for workers.
-/// @param  verifier           Address of an IVerifier contract.
-/// @param  verificationParams ABI-encoded params passed to verifier.verify().
-/// @param  deadline           Unix timestamp after which poster can refund.
 function postTask(
     bytes calldata payload,
     address verifier,
     bytes calldata verificationParams,
-    uint256 deadline
+    uint256 deadline,
+    uint256 refundDeadline
 ) external payable returns (uint256 taskId);
 
-/// @notice Submit a result for an open task.
-///         Only one submission at a time; task must be Open.
+function postTaskWithRegisteredVerifier(
+    bytes calldata payload,
+    string calldata verifierName,
+    bytes calldata verificationParams,
+    uint256 deadline,
+    uint256 refundDeadline
+) external payable returns (uint256 taskId);
+
+/// Poster cancels while Open and before deadline; full escrow returned.
+function cancelOpen(uint256 taskId) external;
+
 function submitResult(uint256 taskId, bytes calldata result) external;
 
-/// @notice Finalize a submitted task. Calls verifier on-chain.
-///         If result is correct: pays worker, marks Finalized.
-///         If result is wrong: clears submission, task returns to Open.
-///         Anyone can call this — the worker will call it themselves to get paid.
 function finalize(uint256 taskId) external;
 
-/// @notice Poster reclaims reward after deadline if task is still Open.
+/// Poster refunds while Open, after deadline, and not after refundDeadline.
 function refund(uint256 taskId) external;
 
-/// @notice Read a full task.
+/// If still Open after refundDeadline, anyone sends escrow to forfeitSink (no poster refund).
+function forfeitAbandonedTask(uint256 taskId) external;
+
+/// Reverts if taskId >= nextTaskId.
 function getTask(uint256 taskId) external view returns (Task memory);
 ```
 
@@ -386,24 +397,27 @@ function getTask(uint256 taskId) external view returns (Task memory);
 event TaskPosted(
     uint256 indexed taskId,
     address indexed poster,
-    address verifier,
+    address indexed verifier,
     uint256 reward,
     uint256 deadline,
+    uint256 refundDeadline,
     bytes payload
 );
 event ResultSubmitted(uint256 indexed taskId, address indexed worker);
 event TaskFinalized(uint256 indexed taskId, address indexed worker, bool success);
 event TaskRefunded(uint256 indexed taskId, address indexed poster);
+event TaskForfeited(uint256 indexed taskId, uint256 amount);
 ```
 
-**Security requirements:**
-- Checks-effects-interactions pattern on all ETH transfers.
-- No reentrancy: use ReentrancyGuard or manual mutex on `finalize` and `refund`.
-- `finalize` must handle the case where `verifier.verify()` reverts (treat as false).
-- Overflow/underflow: use Solidity ^0.8.x built-in checks.
-- Only the poster can call `refund`, only after `deadline`.
-- `submitResult` must revert if task is not Open.
-- `finalize` must revert if task is not Submitted.
+**Security / lifecycle:**
+- Checks-effects-interactions on ETH transfers; non-reentrant `finalize`, `refund`, `cancelOpen`, `forfeitAbandonedTask`.
+- `finalize` treats reverting `verifier.verify()` as false.
+- `verifier` at post time must have bytecode (EOAs rejected).
+- Only the poster may `refund` or `cancelOpen`; `refund` only for `deadline < now ≤ refundDeadline`.
+- After `refundDeadline`, abandoned `Open` tasks are forfeit to `forfeitSink` (disincentivizes “post and forget” spam).
+- `submitResult` only while `Open` and `now ≤ deadline`.
+- `finalize` only while `Submitted`.
+- `getTask` reverts for unknown ids.
 
 ---
 
@@ -663,8 +677,8 @@ contract ZkMlVerifier is IVerifier {
 | Layer | Technology | Reason |
 |---|---|---|
 | Smart contracts | Solidity ^0.8.24 | EVM standard |
-| Development framework | Hardhat + TypeScript | Familiar, good plugin ecosystem |
-| Contract testing | Hardhat + ethers.js v6 | Integrated with Hardhat |
+| Contract toolchain | Foundry (forge, cast, anvil) | Solidity-native tests, scripts, and deployment |
+| Contract testing | Forge (`forge test`) | Tests in Solidity (`.t.sol`); no TypeScript layer |
 | Frontend | Plain HTML/CSS/JS | No build step, fast iteration |
 | Blockchain library (frontend) | ethers.js v6 (CDN) | Industry standard |
 | Worker runtime | Python 3.11 | EZKL has Python SDK |
@@ -687,17 +701,17 @@ Build in this order. Do not start the next phase until the current one is locall
 3. `PrefixVerifier.sol` + local test
 4. `VerifierRegistry.sol` + local test: register, get, getAllNames
 5. `ComputeMarketplace.sol` — implement `postTask` + `submitResult` + `finalize` + `refund`
-6. Full Hardhat test suite (see Phase 3)
+6. Full Forge test suite (see Phase 3)
 
 ### Phase 2 — Deploy to Sepolia
 
-1. Write `scripts/deploy.ts`
-2. Deploy all contracts: `VerifierRegistry`, `HashVerifier`, `PrefixVerifier`, `ComputeMarketplace`
-3. Run `scripts/register-verifiers.ts` to register HashVerifier and PrefixVerifier in the registry
-4. Verify all contracts on Etherscan: `npx hardhat verify --network sepolia <address> <constructor args>`
+1. Write Foundry scripts under `script/` (e.g. `Deploy.s.sol`, `RegisterVerifiers.s.sol`)
+2. Deploy all contracts: `VerifierRegistry`, `HashVerifier`, `PrefixVerifier`, `ComputeMarketplace` (`forge script … --broadcast`)
+3. Run the register script to record HashVerifier and PrefixVerifier in the registry
+4. Verify contracts on Etherscan (e.g. `forge verify-contract` with `--chain sepolia` and your API key)
 5. Note all addresses — update `frontend/index.html` and `worker/worker.py`
 
-### Phase 3 — Hardhat Tests
+### Phase 3 — Foundry (Forge) tests
 
 Write tests covering at minimum:
 
@@ -722,7 +736,7 @@ Write tests covering at minimum:
 1. `worker.py` main loop with web3.py event polling
 2. `HashHandler` — reads payload, encodes input as UTF-8 bytes
 3. `PrefixHandler` — brute-force nonce loop
-4. Test manually: run worker, post task from Hardhat console, watch worker solve it
+4. Test manually: run worker, post a task via `cast send` / a small script / the frontend, watch worker solve it
 
 ### Phase 5 — Frontend
 
@@ -775,7 +789,7 @@ Write tests covering at minimum:
 
 ### Prerequisites
 
-- Node.js 20+
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) (`foundryup`)
 - Python 3.11+
 - MetaMask browser extension
 - Sepolia ETH (from a faucet: https://sepoliafaucet.com)
@@ -785,7 +799,7 @@ Write tests covering at minimum:
 ```bash
 git clone <repo>
 cd merezha
-npm install
+forge build
 ```
 
 ### 2. Environment
@@ -801,14 +815,15 @@ cp .env.example .env
 ### 3. Run Tests
 
 ```bash
-npx hardhat test
+forge test
 ```
 
 ### 4. Deploy to Sepolia
 
 ```bash
-npx hardhat run scripts/deploy.ts --network sepolia
-npx hardhat run scripts/register-verifiers.ts --network sepolia
+# Example — adjust script contract names and RPC flags to match your repo
+forge script script/Deploy.s.sol:DeployScript --rpc-url $SEPOLIA_RPC_URL --broadcast
+forge script script/RegisterVerifiers.s.sol:RegisterVerifiersScript --rpc-url $SEPOLIA_RPC_URL --broadcast
 ```
 
 ### 5. Set Up Python Worker
