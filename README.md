@@ -15,7 +15,8 @@ For the live demo, the frontend posts tasks to Sepolia, a Python worker watches 
 **Network:** Ethereum Sepolia testnet  
 **Chain ID:** `11155111`  
 **Deployment block:** `10828324`  
-**Frontend:** run locally from `frontend/index.html` or `frontend/demo.html`
+**Hosted frontend:** [https://jeniad.github.io/dmblock/](https://jeniad.github.io/dmblock/)  
+**Local frontend:** run from `frontend/index.html` or `frontend/demo.html`
 
 | Contract | Address | Explorer |
 |---|---|---|
@@ -102,7 +103,15 @@ Reward per tile: 0.00001 ETH
 Mode: Sequential for reliability; batch mode is more gas-sensitive
 ```
 
-Serve the frontend locally:
+Use the hosted frontend:
+
+```text
+https://jeniad.github.io/dmblock/
+```
+
+The hosted page is the same static UI as `frontend/index.html`. It connects to MetaMask in the browser and uses the Sepolia addresses above.
+
+Or serve the frontend locally:
 
 ```bash
 python3 -m http.server 8080 -d frontend
