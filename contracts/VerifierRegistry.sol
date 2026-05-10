@@ -11,6 +11,9 @@ contract VerifierRegistry {
 
     error NotOwner();
     error VerifierNotFound();
+    error ZeroAddress();
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -19,6 +22,13 @@ contract VerifierRegistry {
 
     constructor() {
         owner = msg.sender;
+    }
+
+    /// @notice Transfer registry owner (typically to governance after bootstrap registration).
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
     }
 
     function register(string calldata name, address verifier) external onlyOwner {

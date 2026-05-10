@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Local demo: ethers UMD may require unsafe-eval; inline script/style need unsafe-inline. Prefer serving via http.server to avoid file:// quirks. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https: ws: wss:; img-src 'self' data: blob:;" />
   <title>Merezha</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -459,6 +461,89 @@
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       font-size: 0.88em;
     }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .mono-sm {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.78rem;
+      word-break: break-all;
+    }
+
+    table.verifier-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    table.verifier-table th,
+    table.verifier-table td {
+      text-align: left;
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    table.verifier-table th {
+      color: var(--parchment-dim);
+      font-weight: 600;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .gov-card {
+      background: rgba(18, 26, 40, 0.75);
+      border: 1px solid rgba(232, 226, 214, 0.08);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .gov-card header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+
+    .gov-card .stakes {
+      font-size: 0.84rem;
+      color: var(--parchment-dim);
+    }
+
+    .gov-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      align-items: center;
+    }
+
+    .gov-actions input[type="text"] {
+      width: 6rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.82rem;
+      padding: 0.35rem 0.45rem;
+      border-radius: 6px;
+      border: 1px solid var(--velvet-edge);
+      background: rgba(12, 16, 24, 0.55);
+      color: var(--parchment);
+    }
+
+    .inline-note {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
@@ -483,7 +568,7 @@
       <aside class="config">
         <h2>Session parameters</h2>
         <div class="field">
-          <label for="rpcHint">Network</label>
+          <label for="chainPreset">Network</label>
           <select id="chainPreset">
             <option value="11155111">Sepolia (11155111)</option>
             <option value="31337">Anvil local (31337)</option>
@@ -499,19 +584,69 @@
           <input id="registryAddr" type="text" spellcheck="false" placeholder="0x…" autocomplete="off" />
         </div>
         <div class="field">
+          <label for="govAddr">Verifier governance</label>
+          <input id="govAddr" type="text" spellcheck="false" placeholder="0x… (deploy log)" autocomplete="off" />
+          <p class="hint">
+            <strong>VerifierGovernance</strong> from the same deploy as the registry. Save, connect wallet, open
+            <a href="#governancePanel">Verifier governance ↓</a>: create proposal → vote → execute to register a new verifier name.
+          </p>
+        </div>
+        <div class="field">
+          <label for="batchPosterAddr">Marketplace batch poster</label>
+          <input id="batchPosterAddr" type="text" spellcheck="false" placeholder="0x… (optional; deploy log)" autocomplete="off" />
+          <p class="hint">Optional: for <strong>batch copies</strong> &gt; 1, set the batch poster from your deploy log. On-chain <code>poster</code> is that contract; use it for cancel/refund on batch-posted tasks.</p>
+        </div>
+        <div class="field">
           <label for="fromBlock">Event scan from block</label>
           <input id="fromBlock" type="number" min="0" value="0" />
-          <p class="hint">Set to your deploy block on testnet to speed up indexing.</p>
+          <p class="hint">Public RPCs cap log scans (~50k blocks per request). On Sepolia use your <strong>deploy block</strong> or the explorer shows errors. Anvil can stay <code>0</code>.</p>
         </div>
         <button type="button" class="btn btn-ghost" id="saveConfigBtn" style="width:100%">Save configuration</button>
       </aside>
 
       <main class="content">
         <section class="panel">
-          <h2>Task registry</h2>
-          <p class="sub">Live view of posted work units, reconciled with on-chain state. Refreshes every fifteen seconds.</p>
+          <h2>Network explorer</h2>
+          <p class="sub">Tasks from <code>TaskPosted</code>, reconciled with <code>getTask</code>, plus worker submission and finalization when indexed.</p>
+          <div class="toolbar">
+            <button type="button" class="btn btn-ghost" id="refreshExplorerBtn">Refresh now</button>
+          </div>
           <div id="taskFeed" class="task-grid"></div>
           <p class="refresh-note" id="feedStatus"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Registered verifiers</h2>
+          <p class="sub">On-chain names from <code>VerifierRegistry.getAllNames()</code> and resolved addresses.</p>
+          <div id="verifierTableWrap"></div>
+          <p class="refresh-note" id="verifierStatus"></p>
+        </section>
+
+        <section class="panel" id="governancePanel">
+          <h2>Verifier governance</h2>
+          <p class="sub">
+            Add verifiers <strong>through the UI</strong>: create a proposal (name + verifier contract address + stake), vote while open, then execute after the period if YES stake &gt; NO stake. That calls <code>registry.register</code>. Stakes stay in the governance contract (prototype).
+          </p>
+          <form id="govCreateForm" class="compose-grid cols-2">
+            <div class="field">
+              <label for="govPropName">Verifier name</label>
+              <input id="govPropName" type="text" placeholder="e.g. myzk" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="govPropVerifier">Verifier contract</label>
+              <input id="govPropVerifier" type="text" spellcheck="false" placeholder="0x…" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="govPropStake">Proposal stake (ETH)</label>
+              <input id="govPropStake" type="text" inputmode="decimal" value="0.01" />
+              <p class="hint" id="govMinHint">Must be ≥ contract minimum (connect & save governance address).</p>
+            </div>
+            <div class="field" style="display:flex;align-items:flex-end;">
+              <button type="submit" class="btn btn-brass" id="govCreateBtn">Create proposal</button>
+            </div>
+          </form>
+          <div id="govProposals" class="task-grid" style="margin-top:1.25rem;"></div>
+          <p class="refresh-note" id="govStatus"></p>
         </section>
 
         <section class="panel">
@@ -560,7 +695,8 @@
             </div>
             <div class="field">
               <label for="payloadJson">Payload JSON</label>
-              <textarea id="payloadJson" rows="3" placeholder='{"type":"hash","description":"Find preimage"}'></textarea>
+              <textarea id="payloadJson" rows="3" placeholder='{"type":"hash","input":"hello","docs":"https://…"}'></textarea>
+              <p class="hint">Optional <code>docs</code> URL (shown as a safe link in the explorer). Custom verifier mode still requires the contract address above — add links here for humans only.</p>
             </div>
             <div class="compose-grid cols-2">
               <div class="field">
@@ -568,9 +704,14 @@
                 <input id="rewardEth" type="text" inputmode="decimal" value="0.01" />
               </div>
               <div class="field">
-                <label for="verifierHint">Resolved verifier address</label>
-                <input id="verifierHint" type="text" readonly style="opacity:0.85" />
+                <label for="batchCopies">Batch copies</label>
+                <input id="batchCopies" type="number" min="1" max="40" value="1" />
+                <p class="hint">1 = normal single tx. &gt;1 requires batch poster address; identical tasks in one <code>postBatch</code> (one signature).</p>
               </div>
+            </div>
+            <div class="field">
+              <label for="verifierHint">Resolved verifier address</label>
+              <input id="verifierHint" type="text" readonly style="opacity:0.85" />
             </div>
             <div class="compose-grid cols-2">
               <div class="field">
@@ -608,6 +749,7 @@
 
     <footer class="colophon">
       Merezha · coursework (DMBLOCK). Contracts and UI are prototypes; do not use for real funds.
+      · <a href="demo.html">Mandelbrot grid demo</a>
     </footer>
   </div>
 
@@ -623,11 +765,31 @@
     "function refund(uint256 taskId)",
     "function nextTaskId() view returns (uint256)",
     "event TaskPosted(uint256 indexed taskId, address indexed poster, address indexed verifier, uint256 reward, uint256 deadline, uint256 refundDeadline, bytes payload)",
+    "event ResultSubmitted(uint256 indexed taskId, address indexed worker)",
+    "event TaskFinalized(uint256 indexed taskId, address indexed worker, bool success)",
+  ];
+
+  const BATCH_POSTER_ABI = [
+    "function postBatch((bool useRegistry, address verifier, string verifierName, bytes payload, bytes verificationParams, uint256 deadline, uint256 refundDeadline, uint256 reward)[] tasks) payable",
+    "function beneficiaryOf(uint256 taskId) view returns (address)",
+    "function userCancelOpen(uint256 taskId)",
+    "function userRefund(uint256 taskId)",
   ];
 
   const REGISTRY_ABI = [
     "function getAllNames() view returns (string[])",
     "function get(string name) view returns (address)",
+  ];
+
+  const GOV_ABI = [
+    "function registry() view returns (address)",
+    "function minProposalStake() view returns (uint256)",
+    "function votingPeriod() view returns (uint256)",
+    "function nextProposalId() view returns (uint256)",
+    "function proposals(uint256 proposalId) view returns (string name, address verifier, address proposer, uint256 yesStake, uint256 noStake, uint256 endTime, bool executed)",
+    "function createProposal(string name, address verifier) payable returns (uint256)",
+    "function vote(uint256 proposalId, bool support) payable",
+    "function execute(uint256 proposalId)",
   ];
 
   const STATUS = ["Open", "Submitted", "Finalized", "Refunded", "Forfeited"];
@@ -658,6 +820,8 @@
     zkmlInstances: document.getElementById("zkmlInstances"),
     payloadJson: document.getElementById("payloadJson"),
     rewardEth: document.getElementById("rewardEth"),
+    batchCopies: document.getElementById("batchCopies"),
+    batchPosterAddr: document.getElementById("batchPosterAddr"),
     verifierHint: document.getElementById("verifierHint"),
     deadlineLocal: document.getElementById("deadlineLocal"),
     refundLocal: document.getElementById("refundLocal"),
@@ -667,11 +831,22 @@
     cancelBtn: document.getElementById("cancelBtn"),
     refundBtn: document.getElementById("refundBtn"),
     toasts: document.getElementById("toasts"),
+    govAddr: document.getElementById("govAddr"),
+    verifierTableWrap: document.getElementById("verifierTableWrap"),
+    verifierStatus: document.getElementById("verifierStatus"),
+    govProposals: document.getElementById("govProposals"),
+    govStatus: document.getElementById("govStatus"),
+    govMinHint: document.getElementById("govMinHint"),
+    govCreateForm: document.getElementById("govCreateForm"),
+    refreshExplorerBtn: document.getElementById("refreshExplorerBtn"),
   };
 
   const LS = {
     market: "merezha_market",
     registry: "merezha_registry",
+    governance: "merezha_governance",
+    batch: "merezha_batch",
+    batchCopies: "merezha_batch_copies",
     fromBlock: "merezha_from_block",
     chain: "merezha_chain",
   };
@@ -685,6 +860,9 @@
   function loadConfig() {
     els.marketAddr.value = localStorage.getItem(LS.market) || "";
     els.registryAddr.value = localStorage.getItem(LS.registry) || "";
+    els.govAddr.value = localStorage.getItem(LS.governance) || "";
+    els.batchPosterAddr.value = localStorage.getItem(LS.batch) || "";
+    els.batchCopies.value = localStorage.getItem(LS.batchCopies) || "1";
     els.fromBlock.value = localStorage.getItem(LS.fromBlock) || "0";
     els.chainPreset.value = localStorage.getItem(LS.chain) || "11155111";
   }
@@ -692,10 +870,14 @@
   function saveConfig() {
     localStorage.setItem(LS.market, els.marketAddr.value.trim());
     localStorage.setItem(LS.registry, els.registryAddr.value.trim());
+    localStorage.setItem(LS.governance, els.govAddr.value.trim());
+    localStorage.setItem(LS.batch, els.batchPosterAddr.value.trim());
+    localStorage.setItem(LS.batchCopies, els.batchCopies.value);
     localStorage.setItem(LS.fromBlock, els.fromBlock.value);
     localStorage.setItem(LS.chain, els.chainPreset.value);
     toast("Configuration saved locally.", "ok");
     bindContracts();
+    refreshExplorer();
   }
 
   function toast(msg, kind, txHash) {
@@ -744,6 +926,20 @@
     return Math.floor(new Date(str).getTime() / 1000);
   }
 
+  function taskIdsFromReceipt(receipt, marketAddr) {
+    const m = marketAddr.toLowerCase();
+    const iface = new ethers.Interface(MARKET_ABI);
+    const ids = [];
+    for (const lg of receipt.logs) {
+      if (lg.address.toLowerCase() !== m) continue;
+      try {
+        const p = iface.parseLog(lg);
+        if (p && p.name === "TaskPosted") ids.push(p.args.taskId);
+      } catch (_) {}
+    }
+    return ids;
+  }
+
   function bindContracts() {
     const m = els.marketAddr.value.trim();
     const r = els.registryAddr.value.trim();
@@ -763,6 +959,35 @@
     }
   }
 
+  async function switchMetaMaskToPreset() {
+    if (!window.ethereum) return;
+    const expected = BigInt(els.chainPreset.value);
+    const hexChainId = "0x" + expected.toString(16);
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: hexChainId }],
+      });
+    } catch (e) {
+      const code = e && (e.code ?? e?.data?.originalError?.code);
+      if (code === 4902 && expected === 31337n) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: hexChainId,
+              chainName: "Anvil Local",
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["http://127.0.0.1:8545"],
+            },
+          ],
+        });
+      } else if (code !== 4001) {
+        console.warn("switchMetaMaskToPreset:", e);
+      }
+    }
+  }
+
   async function connectWallet() {
     if (!window.ethereum) {
       toast("Install MetaMask (or another EIP-1193 wallet).", "err");
@@ -770,6 +995,8 @@
     }
     provider = new ethers.BrowserProvider(window.ethereum);
     const raw = await provider.send("eth_requestAccounts", []);
+    await switchMetaMaskToPreset();
+    provider = new ethers.BrowserProvider(window.ethereum);
     signer = await provider.getSigner();
     const net = await provider.getNetwork();
     const expected = BigInt(els.chainPreset.value);
@@ -786,12 +1013,47 @@
     els.connectBtn.textContent = "Connected";
     bindContracts();
     await refreshVerifierNames();
-    loadTasks();
+    await refreshExplorer();
+  }
+
+  async function refreshExplorer() {
+    await loadTasks();
+    await loadVerifierDirectory();
+    await loadGovernancePanel();
   }
 
   function badgeClass(s) {
     const x = ["badge-open", "badge-submitted", "badge-finalized", "badge-refunded", "badge-forfeited"];
     return x[s] || "badge-finalized";
+  }
+
+  function safeDocsUrl(raw) {
+    const s = String(raw).trim();
+    if (!/^https?:\/\//i.test(s)) return null;
+    try {
+      const u = new URL(s);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      return u.href;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Many RPCs reject eth_getLogs spanning &gt; ~50k blocks; MetaMask default Sepolia is strict. */
+  const RPC_LOG_CHUNK = 40000;
+
+  async function queryFilterChunked(contract, filter, fromBlockNum, toBlockNum) {
+    const lo = Math.max(0, Math.floor(fromBlockNum));
+    const hi = Math.max(lo, Math.floor(toBlockNum));
+    const out = [];
+    let start = lo;
+    while (start <= hi) {
+      const end = Math.min(start + RPC_LOG_CHUNK - 1, hi);
+      const chunk = await contract.queryFilter(filter, start, end);
+      out.push(...chunk);
+      start = end + 1;
+    }
+    return out;
   }
 
   async function refreshVerifierNames() {
@@ -891,7 +1153,7 @@
         '<div class="empty-state">' +
         (!window.ethereum
           ? "Install an EIP-1193 wallet (e.g. MetaMask) and open this page over HTTPS or localhost to load chain data."
-          : "Enter marketplace and registry addresses, save configuration, then connect your wallet.") +
+          : "Enter marketplace address, save configuration, then connect your wallet (or save and refresh to load read-only data).") +
         "</div>";
       els.feedStatus.textContent = "";
       return;
@@ -899,7 +1161,13 @@
     els.feedStatus.textContent = "Loading…";
     try {
       const fromBlock = Math.max(0, parseInt(els.fromBlock.value, 10) || 0);
-      const ev = await market.queryFilter(market.filters.TaskPosted(), fromBlock);
+      const latest = await provider.getBlockNumber();
+      const ev = await queryFilterChunked(
+        market,
+        market.filters.TaskPosted(),
+        fromBlock,
+        latest
+      );
       const next = await market.nextTaskId();
       const frag = document.createDocumentFragment();
 
@@ -907,6 +1175,7 @@
         els.taskFeed.innerHTML =
           '<div class="empty-state">No tasks indexed yet — be the first to post a computation.</div>';
       } else {
+        const z = ethers.ZeroAddress;
         for (const log of [...ev].reverse()) {
           const a = log.args;
           const taskId = a.taskId;
@@ -919,6 +1188,23 @@
           let taskOnChain = null;
           try {
             taskOnChain = await market.getTask(taskId);
+          } catch (_) {}
+
+          let outcomeHtml = "";
+          try {
+            const finEv = await queryFilterChunked(
+              market,
+              market.filters.TaskFinalized(taskId),
+              fromBlock,
+              latest
+            );
+            if (finEv.length) {
+              const last = finEv[finEv.length - 1].args;
+              const ok = last.success;
+              outcomeHtml = `<div><strong>Outcome</strong> · ${
+                ok ? "Verified — reward paid to worker" : "Check failed — task re-opened for another worker"
+              }</div>`;
+            }
           } catch (_) {}
 
           const card = document.createElement("article");
@@ -940,6 +1226,11 @@
           const st = taskOnChain ? Number(taskOnChain.status) : null;
           const stLabel = st !== null ? STATUS[st] : "…";
 
+          let workerHtml = "";
+          if (taskOnChain && taskOnChain.worker && taskOnChain.worker !== z) {
+            workerHtml = `<div><strong>Worker</strong> · ${taskOnChain.worker}</div>`;
+          }
+
           card.innerHTML = `
             <header class="row">
               <span class="task-id">Task #${taskId.toString()}</span>
@@ -953,6 +1244,14 @@
               <div><strong>Verifier</strong> · ${verifier}</div>
               <div><strong>Submit by</strong> · ${new Date(Number(deadline) * 1000).toLocaleString()}</div>
               <div><strong>Refund until</strong> · ${new Date(Number(refundDeadline) * 1000).toLocaleString()}</div>
+              ${workerHtml}
+              ${outcomeHtml}
+              ${(() => {
+                const u = meta.docs ? safeDocsUrl(meta.docs) : null;
+                return u
+                  ? `<div><strong>Docs</strong> · <a href="${u}" target="_blank" rel="noopener noreferrer">${escapeHtml(u)}</a></div>`
+                  : "";
+              })()}
               ${meta.description ? `<div><strong>Description</strong> · ${escapeHtml(meta.description)}</div>` : ""}
               ${meta.type ? `<div><strong>Type</strong> · ${escapeHtml(meta.type)}</div>` : ""}
             </div>
@@ -972,6 +1271,124 @@
     } catch (e) {
       els.feedStatus.textContent = "Error: " + (e.message || e);
       toast("Task feed failed: " + (e.message || e), "err");
+    }
+  }
+
+  async function loadVerifierDirectory() {
+    bindContracts();
+    if (!registry) {
+      els.verifierTableWrap.innerHTML =
+        '<div class="empty-state">Save the verifier registry address to list names.</div>';
+      els.verifierStatus.textContent = "";
+      return;
+    }
+    els.verifierStatus.textContent = "Loading…";
+    try {
+      const rAddr = els.registryAddr.value.trim();
+      if (provider && ethers.isAddress(rAddr)) {
+        const code = await provider.getCode(rAddr);
+        if (!code || code === "0x") {
+          els.verifierTableWrap.innerHTML =
+            '<div class="empty-state">Nothing at this address on the <strong>current MetaMask network</strong>. Use the <strong>VerifierRegistry</strong> address from your deploy log and match the chain (e.g. Anvil chain ID <strong>31337</strong>, RPC <code>http://127.0.0.1:8545</code>).</div>';
+          els.verifierStatus.textContent = "";
+          return;
+        }
+      }
+      const names = await registry.getAllNames();
+      if (!names.length) {
+        els.verifierTableWrap.innerHTML = '<div class="empty-state">No registered names.</div>';
+        els.verifierStatus.textContent = "";
+        return;
+      }
+      let rows =
+        '<table class="verifier-table"><thead><tr><th>Name</th><th>Contract</th></tr></thead><tbody>';
+      for (const n of names) {
+        const addr = await registry.get(n);
+        rows += `<tr><td><strong>${escapeHtml(n)}</strong></td><td class="mono-sm">${addr}</td></tr>`;
+      }
+      rows += "</tbody></table>";
+      els.verifierTableWrap.innerHTML = rows;
+      els.verifierStatus.textContent = "Updated " + new Date().toLocaleTimeString();
+    } catch (e) {
+      els.verifierStatus.textContent = "Error: " + (e.message || e);
+    }
+  }
+
+  async function loadGovernancePanel() {
+    const gAddr = els.govAddr.value.trim();
+    if (!gAddr || !ethers.isAddress(gAddr)) {
+      els.govProposals.innerHTML =
+        '<div class="empty-state">Optional: paste <strong>VerifierGovernance</strong> from deploy logs and save.</div>';
+      els.govMinHint.textContent =
+        "Minimum stake and voting period appear here once a valid governance address is saved.";
+      els.govStatus.textContent = "";
+      return;
+    }
+    if (!provider) {
+      els.govProposals.innerHTML =
+        '<div class="empty-state">Connect wallet to load governance state.</div>';
+      return;
+    }
+    els.govStatus.textContent = "Loading…";
+    try {
+      const code = await provider.getCode(gAddr);
+      if (!code || code === "0x") {
+        els.govProposals.innerHTML =
+          '<div class="empty-state">No contract at this address on the <strong>current chain</strong>. Use the governance address from the same deploy as marketplace/registry, and ensure the sidebar network preset matches MetaMask (e.g. Anvil 31337 vs Sepolia).</div>';
+        els.govMinHint.textContent =
+          "Fix chain + address: blank governance if you use an older deploy without VerifierGovernance.";
+        els.govStatus.textContent = "";
+        return;
+      }
+      const govRead = new ethers.Contract(gAddr, GOV_ABI, provider);
+      const nextId = await govRead.nextProposalId();
+      const minStake = await govRead.minProposalStake();
+      const period = await govRead.votingPeriod();
+      els.govMinHint.textContent = `Minimum proposal stake: ${ethers.formatEther(minStake)} ETH · voting period: ${period.toString()} seconds`;
+
+      const n = Number(nextId);
+      if (n === 0) {
+        els.govProposals.innerHTML = '<div class="empty-state">No proposals yet — create one below.</div>';
+        els.govStatus.textContent = "";
+        return;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      let html = "";
+      for (let i = 0; i < n; i++) {
+        const p = await govRead.proposals(i);
+        const name = p.name;
+        const verifier = p.verifier;
+        const yesStake = p.yesStake;
+        const noStake = p.noStake;
+        const endTime = Number(p.endTime);
+        const executed = p.executed;
+        const open = !executed && now < endTime;
+        const canExec =
+          !executed && now >= endTime && yesStake > noStake;
+
+        html += `<div class="gov-card" data-proposal-id="${i}">
+          <header>
+            <span style="font-weight:600;color:var(--brass-bright);">Proposal #${i}</span>
+            <span class="stakes">${executed ? "Executed" : open ? "Voting open" : "Ended — execute if YES wins"}</span>
+          </header>
+          <div class="mono-sm">Name: ${escapeHtml(name)}</div>
+          <div class="mono-sm">Verifier: ${verifier}</div>
+          <div class="stakes">YES stake: ${ethers.formatEther(yesStake)} ETH · NO stake: ${ethers.formatEther(noStake)} ETH</div>
+          <div class="stakes">Voting ends: ${new Date(endTime * 1000).toLocaleString()}</div>
+          <div class="gov-actions">
+            <input type="text" data-gov-stake placeholder="ETH" value="0.01" aria-label="Vote stake ETH" />
+            <button type="button" class="btn btn-ghost" data-gov-act="yes" data-pid="${i}">Vote YES</button>
+            <button type="button" class="btn btn-ghost" data-gov-act="no" data-pid="${i}">Vote NO</button>
+            <button type="button" class="btn btn-primary" data-gov-act="exec" data-pid="${i}" ${canExec ? "" : "disabled"}>Execute</button>
+          </div>
+        </div>`;
+      }
+      els.govProposals.innerHTML = html;
+      els.govStatus.textContent = "";
+    } catch (e) {
+      els.govStatus.textContent = "Error: " + (e.message || e);
+      toast("Governance panel failed: " + (e.message || e), "err");
     }
   }
 
@@ -1025,24 +1442,71 @@
       toast("Bad verification params: " + (err.message || err), "err");
       return;
     }
-    const value = ethers.parseEther(els.rewardEth.value || "0");
+    const rewardWei = ethers.parseEther(els.rewardEth.value || "0");
+    let copies = parseInt(els.batchCopies.value, 10);
+    if (!Number.isFinite(copies) || copies < 1) copies = 1;
+    copies = Math.min(40, copies);
+    const batchAddr = els.batchPosterAddr.value.trim();
     const m = market.connect(signer);
+    const marketAddr = els.marketAddr.value.trim();
+    if (copies > 1 && !ethers.isAddress(batchAddr)) {
+      toast("Batch copies > 1: save a valid MarketplaceBatchPoster address in the sidebar.", "err");
+      return;
+    }
     try {
       els.postBtn.disabled = true;
       toast("Submitting transaction…", "ok");
-      const tx = useCustom
-        ? await m.postTask(payloadBytes, customAddr, vParams, deadline, refundDl, { value })
-        : await m.postTaskWithRegisteredVerifier(
-            payloadBytes,
-            name,
-            vParams,
-            deadline,
-            refundDl,
-            { value }
-          );
+      let tx;
+      if (copies > 1) {
+        const vParamsBytes = ethers.getBytes(vParams);
+        const oneSpec = {
+          useRegistry: !useCustom,
+          verifier: useCustom ? customAddr : ethers.ZeroAddress,
+          verifierName: useCustom ? "" : name,
+          payload: payloadBytes,
+          verificationParams: vParamsBytes,
+          deadline: BigInt(deadline),
+          refundDeadline: BigInt(refundDl),
+          reward: rewardWei,
+        };
+        const specs = Array.from({ length: copies }, () => ({ ...oneSpec }));
+        const batch = new ethers.Contract(batchAddr, BATCH_POSTER_ABI, signer);
+        const totalVal = rewardWei * BigInt(copies);
+        tx = await batch.postBatch(specs, { value: totalVal });
+      } else {
+        tx = useCustom
+          ? await m.postTask(payloadBytes, customAddr, vParams, deadline, refundDl, { value: rewardWei })
+          : await m.postTaskWithRegisteredVerifier(
+              payloadBytes,
+              name,
+              vParams,
+              deadline,
+              refundDl,
+              { value: rewardWei }
+            );
+      }
       toast("Pending…", "ok", tx.hash);
-      await tx.wait();
-      toast("Task posted successfully.", "ok", tx.hash);
+      const receipt = await tx.wait();
+      if (copies > 1) {
+        const ids = taskIdsFromReceipt(receipt, marketAddr);
+        if (ids.length === copies) {
+          const lo = ids[0];
+          const hi = ids[ids.length - 1];
+          toast(
+            `Posted ${copies} tasks in one batch (IDs ${lo.toString()}–${hi.toString()}).`,
+            "ok",
+            tx.hash
+          );
+        } else {
+          toast(
+            `Batch confirmed (${copies} copies); expected ${copies} TaskPosted logs, got ${ids.length}. Check the tx.`,
+            "err",
+            tx.hash
+          );
+        }
+      } else {
+        toast("Task posted successfully.", "ok", tx.hash);
+      }
       await loadTasks();
     } catch (err) {
       toast("Post failed: " + (err.reason || err.message || err), "err");
@@ -1051,19 +1515,37 @@
     }
   });
 
-  async function doAction(fn) {
+  async function cancelOrRefund(kind) {
     if (!signer || !market) {
       toast("Connect wallet first.", "err");
       return;
     }
-    const id = els.actionTaskId.value;
-    if (id === "" || id < 0) {
+    const idStr = els.actionTaskId.value;
+    if (idStr === "" || Number(idStr) < 0) {
       toast("Enter task ID.", "err");
       return;
     }
+    const idBn = BigInt(idStr);
     const m = market.connect(signer);
+    const batchAddr = els.batchPosterAddr.value.trim();
+    let useBatch = false;
     try {
-      const tx = await fn(m, BigInt(id));
+      const t = await market.getTask(idBn);
+      if (batchAddr && ethers.isAddress(batchAddr) && t.poster.toLowerCase() === batchAddr.toLowerCase()) {
+        useBatch = true;
+      }
+    } catch (err) {
+      toast("Could not load task: " + (err.reason || err.message || err), "err");
+      return;
+    }
+    try {
+      let tx;
+      if (useBatch) {
+        const batch = new ethers.Contract(batchAddr, BATCH_POSTER_ABI, signer);
+        tx = kind === "cancel" ? await batch.userCancelOpen(idBn) : await batch.userRefund(idBn);
+      } else {
+        tx = kind === "cancel" ? await m.cancelOpen(idBn) : await m.refund(idBn);
+      }
       toast("Pending…", "ok", tx.hash);
       await tx.wait();
       toast("Confirmed.", "ok", tx.hash);
@@ -1073,12 +1555,99 @@
     }
   }
 
-  els.cancelBtn.addEventListener("click", () =>
-    doAction((m, id) => m.cancelOpen(id))
-  );
-  els.refundBtn.addEventListener("click", () =>
-    doAction((m, id) => m.refund(id))
-  );
+  els.cancelBtn.addEventListener("click", () => cancelOrRefund("cancel"));
+  els.refundBtn.addEventListener("click", () => cancelOrRefund("refund"));
+
+  els.refreshExplorerBtn.addEventListener("click", () => void refreshExplorer());
+
+  els.govCreateForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const govAddrEl = document.getElementById("govAddr");
+    const nameEl = document.getElementById("govPropName");
+    const verEl = document.getElementById("govPropVerifier");
+    const stakeEl = document.getElementById("govPropStake");
+    const createBtn = document.getElementById("govCreateBtn");
+    if (!govAddrEl || !nameEl || !verEl || !stakeEl) {
+      toast("Governance inputs missing from the page. Hard-refresh (⌘⇧R / Ctrl+Shift+R).", "err");
+      return;
+    }
+    const gAddr = govAddrEl.value.trim();
+    const name = nameEl.value.trim();
+    const ver = verEl.value.trim();
+    const stake = stakeEl.value.trim() || "0";
+    if (!signer) {
+      toast("Connect wallet first.", "err");
+      return;
+    }
+    if (!ethers.isAddress(gAddr)) {
+      toast("Save a valid governance address in the sidebar.", "err");
+      return;
+    }
+    if (!name) {
+      toast("Enter verifier name.", "err");
+      return;
+    }
+    if (!ethers.isAddress(ver)) {
+      toast("Enter verifier contract address.", "err");
+      return;
+    }
+    try {
+      if (createBtn) createBtn.disabled = true;
+      const gov = new ethers.Contract(gAddr, GOV_ABI, signer);
+      const tx = await gov.createProposal(name, ver, { value: ethers.parseEther(stake) });
+      toast("Pending…", "ok", tx.hash);
+      await tx.wait();
+      toast("Proposal created.", "ok", tx.hash);
+      nameEl.value = "";
+      verEl.value = "";
+      await refreshExplorer();
+    } catch (err) {
+      toast("Create proposal failed: " + (err.reason || err.message || err), "err");
+    } finally {
+      if (createBtn) createBtn.disabled = false;
+    }
+  });
+
+  els.govProposals.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-gov-act]");
+    if (!btn) return;
+    const act = btn.getAttribute("data-gov-act");
+    const pidStr = btn.getAttribute("data-pid");
+    if (!pidStr) return;
+    const pid = BigInt(pidStr);
+    const gAddr = els.govAddr.value.trim();
+    if (!signer) {
+      toast("Connect wallet first.", "err");
+      return;
+    }
+    if (!ethers.isAddress(gAddr)) {
+      toast("Save governance address.", "err");
+      return;
+    }
+    const gov = new ethers.Contract(gAddr, GOV_ABI, signer);
+    try {
+      if (act === "exec") {
+        const tx = await gov.execute(pid);
+        toast("Pending…", "ok", tx.hash);
+        await tx.wait();
+        toast("Verifier registered.", "ok", tx.hash);
+        await refreshExplorer();
+        await refreshVerifierNames();
+        return;
+      }
+      if (act !== "yes" && act !== "no") return;
+      const card = btn.closest(".gov-card");
+      const stakeInp = card ? card.querySelector("[data-gov-stake]") : null;
+      const stakeEth = stakeInp && stakeInp.value ? stakeInp.value : "0";
+      const tx = await gov.vote(pid, act === "yes", { value: ethers.parseEther(stakeEth) });
+      toast("Pending…", "ok", tx.hash);
+      await tx.wait();
+      toast("Vote recorded.", "ok", tx.hash);
+      await refreshExplorer();
+    } catch (err) {
+      toast("Governance tx failed: " + (err.reason || err.message || err), "err");
+    }
+  });
 
   els.verifierMode.addEventListener("change", onVerifierModeChange);
   els.paramProfile.addEventListener("change", updateVerifierFields);
@@ -1094,8 +1663,8 @@
   onVerifierModeChange();
 
   if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(loadTasks, 15000);
-  loadTasks();
+  refreshTimer = setInterval(() => void refreshExplorer(), 15000);
+  void refreshExplorer();
 })();
   </script>
 </body>

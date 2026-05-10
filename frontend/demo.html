@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; connect-src 'self' http://127.0.0.1:* http://localhost:* https: ws: wss:; img-src 'self' data: blob:;" />
+  <title>Merezha · Mandelbrot demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;0,700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --void: #0c1018;
+      --panel: #1a2638;
+      --edge: #2e3d56;
+      --ox: #4d6fa8;
+      --brass: #e4cf8a;
+      --paper: #e8e2d6;
+      --dim: #7a8494;
+      --ok: #6eb89a;
+      --font: "Spectral", Georgia, serif;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font);
+      color: var(--paper);
+      background: var(--void);
+      background-image: radial-gradient(ellipse 100% 60% at 50% -10%, rgba(77, 111, 168, 0.2), transparent 50%);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
+    header { border-bottom: 1px solid rgba(228, 207, 138, 0.2); padding-bottom: 1.25rem; margin-bottom: 1.5rem; }
+    header h1 { font-size: 1.75rem; font-weight: 600; color: var(--brass); }
+    header p { color: var(--dim); font-size: 0.95rem; margin-top: 0.35rem; max-width: 52rem; }
+    header a { color: var(--ox); }
+    .state-badge {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(77, 111, 168, 0.25);
+      border: 1px solid rgba(77, 111, 168, 0.5);
+    }
+    .state-badge.live { background: rgba(110, 184, 154, 0.2); border-color: rgba(110, 184, 154, 0.45); color: var(--ok); }
+    .state-badge.done { background: rgba(228, 207, 138, 0.15); border-color: rgba(228, 207, 138, 0.4); color: var(--brass); }
+    .panel {
+      background: linear-gradient(165deg, var(--panel) 0%, #121a28 100%);
+      border: 1px solid rgba(77, 111, 168, 0.2);
+      border-radius: 14px;
+      padding: 1.35rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .panel h2 { font-size: 1.2rem; margin-bottom: 0.75rem; color: var(--paper); }
+    .grid-form {
+      display: grid;
+      gap: 0.85rem;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      align-items: end;
+    }
+    label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--dim); margin-bottom: 0.25rem; }
+    input, select {
+      width: 100%;
+      padding: 0.5rem 0.55rem;
+      border-radius: 8px;
+      border: 1px solid var(--edge);
+      background: rgba(12, 16, 24, 0.6);
+      color: var(--paper);
+      font-family: var(--font);
+      font-size: 0.9rem;
+    }
+    .field-full { grid-column: 1 / -1; }
+    .hint { font-size: 0.8rem; color: var(--dim); margin-top: 0.5rem; grid-column: 1 / -1; }
+    button.btn {
+      font-family: var(--font);
+      font-weight: 600;
+      padding: 0.65rem 1.2rem;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .btn-primary {
+      background: linear-gradient(165deg, var(--ox) 0%, #3d5a85 100%);
+      color: var(--paper);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-ghost {
+      background: rgba(255,255,255,0.06);
+      color: var(--paper);
+      border: 1px solid rgba(232,226,214,0.15);
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 1rem; align-items: center; }
+    #canvasHost {
+      display: flex;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(0,0,0,0.25);
+      border-radius: 12px;
+      overflow: auto;
+    }
+    #fractalCanvas {
+      display: block;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      max-width: 100%;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+    }
+    .progress-wrap { margin: 1rem 0; }
+    .progress-bar {
+      height: 10px;
+      border-radius: 6px;
+      background: rgba(0,0,0,0.35);
+      overflow: hidden;
+      border: 1px solid var(--edge);
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--ox), var(--ok));
+      width: 0%;
+      transition: width 0.35s ease;
+    }
+    .stats { font-size: 0.9rem; color: var(--dim); margin-top: 0.5rem; }
+    .stats strong { color: var(--paper); }
+    .log {
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+      color: var(--dim);
+      max-height: 140px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-top: 0.75rem;
+      padding: 0.5rem;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+    }
+    .done-summary {
+      display: grid;
+      gap: 0.5rem;
+      font-size: 1.05rem;
+      margin-top: 0.75rem;
+    }
+    .done-summary span { color: var(--brass); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Fractal demo · Mandelbrot on the marketplace</h1>
+      <p>
+        The image is split into a grid. Each tile is one <strong>hash</strong> task: the poster commits to
+        <code>keccak256(utf8(base64(RGBA)))</code>; workers echo the same string from the payload (Merezha hash handler).
+        Tiles appear as workers finalize on-chain.
+        <a href="index.html">Main app</a>
+      </p>
+      <div id="stateBadge" class="state-badge">Setup</div>
+    </header>
+
+    <section class="panel" id="setupPanel">
+      <h2>Setup</h2>
+      <div class="grid-form">
+        <div>
+          <label for="chainPreset">Network</label>
+          <select id="chainPreset">
+            <option value="11155111">Sepolia (11155111)</option>
+            <option value="31337">Anvil (31337)</option>
+          </select>
+        </div>
+        <div class="field-full">
+          <label for="marketAddr">ComputeMarketplace</label>
+          <input id="marketAddr" type="text" spellcheck="false" placeholder="0x…" autocomplete="off" />
+        </div>
+        <div class="field-full">
+          <label for="registryAddr">VerifierRegistry</label>
+          <input id="registryAddr" type="text" spellcheck="false" placeholder="0x…" autocomplete="off" />
+        </div>
+        <div class="field-full">
+          <label>Posting mode</label>
+          <div style="display:flex;flex-wrap:wrap;gap:1rem;margin-top:0.35rem;">
+            <label style="font-weight:500;color:var(--paper);cursor:pointer;">
+              <input type="radio" name="postMode" id="postModeSeq" value="seq" checked style="margin-right:0.35rem;" />
+              One tx per tile (sequential)
+            </label>
+            <label style="font-weight:500;color:var(--paper);cursor:pointer;">
+              <input type="radio" name="postMode" id="postModeBatch" value="batch" style="margin-right:0.35rem;" />
+              Single batch tx
+            </label>
+          </div>
+        </div>
+        <div class="field-full">
+          <label for="batchPosterAddr">MarketplaceBatchPoster</label>
+          <input id="batchPosterAddr" type="text" spellcheck="false" placeholder="0x… (from deploy log; batch mode only)" autocomplete="off" />
+          <p class="hint" style="margin-top:0.35rem;">
+            Batch mode: fewer signatures than one-tx-per-tile. With large tile payloads we send at most <strong>two tiles per <code>postBatch</code></strong> (execution gas); otherwise simulation often reverts with no data. On-chain <code>poster</code> is the batch contract; your wallet is the beneficiary for cancel/refund there.
+          </p>
+        </div>
+        <div>
+          <label for="gridN">Grid N×N</label>
+          <input id="gridN" type="number" min="2" max="12" value="4" />
+        </div>
+        <div>
+          <label for="tilePx">Tile size (px)</label>
+          <input id="tilePx" type="number" min="8" max="128" value="48" />
+        </div>
+        <div>
+          <label for="maxIter">Max iterations</label>
+          <input id="maxIter" type="number" min="16" max="2048" value="128" />
+        </div>
+        <div>
+          <label for="centerRe">Center re</label>
+          <input id="centerRe" type="text" value="-0.5" />
+        </div>
+        <div>
+          <label for="centerIm">Center im</label>
+          <input id="centerIm" type="text" value="0" />
+        </div>
+        <div>
+          <label for="viewScale">View width (real axis)</label>
+          <input id="viewScale" type="text" value="3" />
+        </div>
+        <div>
+          <label for="rewardEth">Reward per tile (ETH)</label>
+          <input id="rewardEth" type="text" value="0.001" />
+        </div>
+        <div>
+          <label for="deadlineMins">Submit deadline (mins from now)</label>
+          <input id="deadlineMins" type="number" min="5" value="60" />
+        </div>
+        <div>
+          <label for="refundMinsAfter">Refund ends (mins after deadline)</label>
+          <input id="refundMinsAfter" type="number" min="60" value="1440" />
+        </div>
+      </div>
+      <p class="hint">
+        Larger grids or tiles mean larger calldata per task (base64 RGBA). Very large batches in one tx can exceed block gas limits — use sequential mode or a smaller grid.
+        Connect wallet, then <strong>Post all tasks</strong>. Run workers with the same marketplace address.
+      </p>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="connectBtn">Connect wallet</button>
+        <button type="button" class="btn btn-primary" id="postAllBtn" disabled>Post all tasks</button>
+        <button type="button" class="btn btn-ghost" id="saveCfgBtn">Save config (local)</button>
+      </div>
+      <div class="log" id="setupLog"></div>
+    </section>
+
+    <section class="panel" id="livePanel" hidden>
+      <h2>Live</h2>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="stats" id="liveStats">Waiting…</div>
+      </div>
+      <div id="canvasHost"><canvas id="fractalCanvas" width="256" height="256"></canvas></div>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="pollBtn">Refresh status</button>
+      </div>
+      <div class="log" id="liveLog"></div>
+    </section>
+
+    <section class="panel" id="donePanel" hidden>
+      <h2>Done</h2>
+      <div class="done-summary" id="doneSummary"></div>
+      <div id="canvasHostDone"></div>
+    </section>
+  </div>
+
+  <script>
+(function () {
+  const MARKET_ABI = [
+    "function postTaskWithRegisteredVerifier(bytes payload, string verifierName, bytes verificationParams, uint256 deadline, uint256 refundDeadline) payable returns (uint256)",
+    "function getTask(uint256 taskId) view returns (tuple(address poster,address worker,address verifier,bytes payload,bytes verificationParams,bytes submittedResult,uint256 reward,uint256 deadline,uint256 refundDeadline,uint8 status))",
+    "event TaskPosted(uint256 indexed taskId, address indexed poster, address indexed verifier, uint256 reward, uint256 deadline, uint256 refundDeadline, bytes payload)",
+    "event TaskFinalized(uint256 indexed taskId, address indexed worker, bool success)",
+  ];
+
+  const BATCH_ABI = [
+    "function postBatch((bool useRegistry, address verifier, string verifierName, bytes payload, bytes verificationParams, uint256 deadline, uint256 refundDeadline, uint256 reward)[] tasks) payable",
+    "function marketplace() view returns (address)",
+  ];
+
+  const REVERT_ERR = new ethers.Interface([
+    "error BadDeadline()",
+    "error BadRefundDeadline()",
+    "error ZeroVerifier()",
+    "error VerifierNotContract()",
+    "error ZeroReward()",
+    "error RegistryDisabled()",
+    "error VerifierNotFound()",
+    "error BadValue()",
+    "error EmptyBatch()",
+    "error Reentrancy()",
+    "error TaskNotFound()",
+    "error TaskNotOpen()",
+    "error NotPoster()",
+    "error ETHSendFailed()",
+  ]);
+
+  function explainRevertData(hex) {
+    if (hex == null || hex === "" || hex === "0x") {
+      return " — no revert data (common when the serialized tx is too large for the node, or gas ran out without a reason).";
+    }
+    try {
+      return " — on-chain: " + REVERT_ERR.parseError(hex).name + "()";
+    } catch (_) {
+      return " data=" + hex;
+    }
+  }
+
+  function formatCallErr(e) {
+    const base = e && (e.shortMessage || e.message) ? e.shortMessage || e.message : String(e);
+    const d = (e && e.data) || (e && e.info && e.info.error && e.info.error.data);
+    if (!d || d === "0x") return base;
+    try {
+      return base + " (" + REVERT_ERR.parseError(d).name + "())";
+    } catch (_) {
+      return base + " data=" + d;
+    }
+  }
+
+  /**
+   * Calldata cap for <code>postBatch</code> (tx size + execution gas both grow with task count).
+   * Keep chunks small so nested <code>postTask</code> calls do not OOG under wallet gas estimates.
+   */
+  const MAX_POSTBATCH_CALLDATA_BYTES = 56000;
+
+  /** Big base64 payloads: each inner <code>postTask</code> is heavy — cap tasks/tx so <code>staticCall</code> / mining succeed. */
+  const MAX_TILES_PER_POSTBATCH = 2;
+
+  function subdivideChunks(chunks, maxTasks) {
+    const out = [];
+    for (const ch of chunks) {
+      for (let i = 0; i < ch.length; i += maxTasks) {
+        out.push(ch.slice(i, i + maxTasks));
+      }
+    }
+    return out;
+  }
+
+  const BATCH_ENCODE_IFACE = new ethers.Interface(BATCH_ABI);
+
+  function specForCalldataProbe(row, dDl, rDl) {
+    return {
+      useRegistry: row.spec.useRegistry,
+      verifier: row.spec.verifier,
+      verifierName: row.spec.verifierName,
+      payload: row.spec.payload,
+      verificationParams: row.spec.verificationParams,
+      deadline: dDl,
+      refundDeadline: rDl,
+      reward: row.spec.reward,
+    };
+  }
+
+  function encodedPostBatchBytes(specs) {
+    const hex = BATCH_ENCODE_IFACE.encodeFunctionData("postBatch", [specs]);
+    return (hex.length - 2) / 2;
+  }
+
+  function chunkRowsByCalldata(rows) {
+    const d0 = 1n;
+    const r0 = 2n;
+    const chunks = [];
+    let cur = [];
+    for (const row of rows) {
+      const tryList = cur.concat([row]);
+      const specs = tryList.map((r) => specForCalldataProbe(r, d0, r0));
+      let nbytes;
+      try {
+        nbytes = encodedPostBatchBytes(specs);
+      } catch (e) {
+        throw new Error("ABI encode postBatch failed: " + (e.message || e));
+      }
+      if (nbytes > MAX_POSTBATCH_CALLDATA_BYTES) {
+        if (!cur.length) {
+          throw new Error(
+            "One tile is too large for a single transaction — lower tile size (px) or grid N."
+          );
+        }
+        chunks.push(cur);
+        cur = [row];
+        const oneSpecs = cur.map((r) => specForCalldataProbe(r, d0, r0));
+        const oneN = encodedPostBatchBytes(oneSpecs);
+        if (oneN > MAX_POSTBATCH_CALLDATA_BYTES) {
+          throw new Error(
+            "One tile is too large for a single transaction — lower tile size (px) or grid N."
+          );
+        }
+      } else {
+        cur = tryList;
+      }
+    }
+    if (cur.length) chunks.push(cur);
+    return chunks;
+  }
+
+  const LS = {
+    market: "merezha_demo_market",
+    registry: "merezha_demo_registry",
+    chain: "merezha_demo_chain",
+    batch: "merezha_demo_batch",
+  };
+
+  let provider = null;
+  let signer = null;
+  let market = null;
+  let pollTimer = null;
+  /** @type {{ taskId: bigint, i: number, j: number, tw: number, th: number }[]} */
+  let tileJobs = [];
+  const drawnTiles = new Set();
+  let demoFinished = false;
+  let demoStartTs = 0;
+  let firstPostTs = 0;
+  let lastFinalizeTs = 0;
+  let totalRewardWei = 0n;
+  let gridN = 4;
+  let tilePx = 48;
+  const els = {
+    stateBadge: document.getElementById("stateBadge"),
+    setupPanel: document.getElementById("setupPanel"),
+    livePanel: document.getElementById("livePanel"),
+    donePanel: document.getElementById("donePanel"),
+    chainPreset: document.getElementById("chainPreset"),
+    marketAddr: document.getElementById("marketAddr"),
+    registryAddr: document.getElementById("registryAddr"),
+    gridN: document.getElementById("gridN"),
+    tilePx: document.getElementById("tilePx"),
+    maxIter: document.getElementById("maxIter"),
+    centerRe: document.getElementById("centerRe"),
+    centerIm: document.getElementById("centerIm"),
+    viewScale: document.getElementById("viewScale"),
+    rewardEth: document.getElementById("rewardEth"),
+    deadlineMins: document.getElementById("deadlineMins"),
+    refundMinsAfter: document.getElementById("refundMinsAfter"),
+    connectBtn: document.getElementById("connectBtn"),
+    postAllBtn: document.getElementById("postAllBtn"),
+    saveCfgBtn: document.getElementById("saveCfgBtn"),
+    setupLog: document.getElementById("setupLog"),
+    progressFill: document.getElementById("progressFill"),
+    liveStats: document.getElementById("liveStats"),
+    fractalCanvas: document.getElementById("fractalCanvas"),
+    liveLog: document.getElementById("liveLog"),
+    pollBtn: document.getElementById("pollBtn"),
+    doneSummary: document.getElementById("doneSummary"),
+    canvasHostDone: document.getElementById("canvasHostDone"),
+    batchPosterAddr: document.getElementById("batchPosterAddr"),
+    postModeSeq: document.getElementById("postModeSeq"),
+    postModeBatch: document.getElementById("postModeBatch"),
+  };
+
+  function log(target, msg) {
+    const t = typeof target === "string" ? els[target] : target;
+    t.textContent += msg + "\n";
+    t.scrollTop = t.scrollHeight;
+  }
+
+  function setState(name) {
+    els.stateBadge.textContent = name;
+    els.stateBadge.className = "state-badge" + (name === "Live" ? " live" : name === "Done" ? " done" : "");
+  }
+
+  function loadCfg() {
+    els.marketAddr.value = localStorage.getItem(LS.market) || "";
+    els.registryAddr.value = localStorage.getItem(LS.registry) || "";
+    els.batchPosterAddr.value = localStorage.getItem(LS.batch) || "";
+    els.chainPreset.value = localStorage.getItem(LS.chain) || "11155111";
+  }
+
+  function saveCfg() {
+    localStorage.setItem(LS.market, els.marketAddr.value.trim());
+    localStorage.setItem(LS.registry, els.registryAddr.value.trim());
+    localStorage.setItem(LS.batch, els.batchPosterAddr.value.trim());
+    localStorage.setItem(LS.chain, els.chainPreset.value);
+    log("setupLog", "Saved.");
+  }
+
+  async function switchChain() {
+    if (!window.ethereum) return;
+    const id = BigInt(els.chainPreset.value);
+    const hex = "0x" + id.toString(16);
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hex }] });
+    } catch (e) {
+      if (e.code === 4902 && id === 31337n) {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: hex,
+            chainName: "Anvil Local",
+            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+            rpcUrls: ["http://127.0.0.1:8545"],
+          }],
+        });
+      }
+    }
+  }
+
+  function bindMarket() {
+    const m = els.marketAddr.value.trim();
+    market = null;
+    if (!m || !ethers.isAddress(m) || !window.ethereum) return;
+    provider = new ethers.BrowserProvider(window.ethereum);
+    market = new ethers.Contract(m, MARKET_ABI, provider);
+  }
+
+  function mandelbrotIter(re, im, maxIter) {
+    let x = 0, y = 0;
+    let iter = 0;
+    while (x * x + y * y <= 4 && iter < maxIter) {
+      const x2 = x * x - y * y + re;
+      y = 2 * x * y + im;
+      x = x2;
+      iter++;
+    }
+    return iter;
+  }
+
+  function iterColor(iter, maxIter) {
+    if (iter >= maxIter) return [12, 8, 22, 255];
+    const t = iter / maxIter;
+    const r = Math.floor(9 * (1 - t) * t * t * t * 255);
+    const g = Math.floor(15 * (1 - t) * (1 - t) * t * t * 255);
+    const b = Math.floor(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255);
+    return [r, g, b, 255];
+  }
+
+  function renderTileRGBA(i, j, N, tw, th, cx, cy, scale, maxIter) {
+    const totalW = N * tw;
+    const totalH = N * th;
+    const u8 = new Uint8Array(tw * th * 4);
+    let p = 0;
+    for (let ly = 0; ly < th; ly++) {
+      const gy = j * th + ly;
+      for (let lx = 0; lx < tw; lx++) {
+        const gx = i * tw + lx;
+        const re = cx + (gx / totalW - 0.5) * scale;
+        const im = cy + (gy / totalH - 0.5) * scale * (totalH / totalW);
+        const it = mandelbrotIter(re, im, maxIter);
+        const [r, g, b, a] = iterColor(it, maxIter);
+        u8[p++] = r;
+        u8[p++] = g;
+        u8[p++] = b;
+        u8[p++] = a;
+      }
+    }
+    return u8;
+  }
+
+  function bytesToBase64(u8) {
+    let s = "";
+    const chunk = 8192;
+    for (let i = 0; i < u8.length; i += chunk) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + chunk, u8.length)));
+    }
+    return btoa(s);
+  }
+
+  function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+
+  function drawPlaceholderCanvas() {
+    const c = els.fractalCanvas;
+    const W = gridN * tilePx;
+    const H = gridN * tilePx;
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#2a3444";
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(77, 111, 168, 0.35)";
+    ctx.lineWidth = 1;
+    for (let g = 1; g < gridN; g++) {
+      ctx.beginPath();
+      ctx.moveTo(g * tilePx, 0);
+      ctx.lineTo(g * tilePx, H);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, g * tilePx);
+      ctx.lineTo(W, g * tilePx);
+      ctx.stroke();
+    }
+  }
+
+  function normalizeBytes(v) {
+    if (v == null) return null;
+    if (v instanceof Uint8Array) return v;
+    try {
+      return ethers.getBytes(v);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function blitTileRGBA(i, j, tw, th, u8) {
+    const c = els.fractalCanvas;
+    const ctx = c.getContext("2d");
+    const len = tw * th * 4;
+    const clamped = new Uint8ClampedArray(len);
+    clamped.set(u8.subarray(0, Math.min(u8.length, len)));
+    ctx.putImageData(new ImageData(clamped, tw, th), i * tw, j * th);
+  }
+
+  function copyCanvasForDone(src) {
+    const dst = document.createElement("canvas");
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.style.display = "block";
+    dst.style.maxWidth = "100%";
+    dst.style.boxShadow = "0 12px 40px rgba(0,0,0,0.45)";
+    dst.getContext("2d").drawImage(src, 0, 0);
+    return dst;
+  }
+
+  function taskIdsFromReceipt(receipt, marketAddr) {
+    const m = marketAddr.toLowerCase();
+    const iface = new ethers.Interface(MARKET_ABI);
+    const ids = [];
+    for (const lg of receipt.logs) {
+      if (lg.address.toLowerCase() !== m) continue;
+      try {
+        const p = iface.parseLog(lg);
+        if (p && p.name === "TaskPosted") ids.push(p.args.taskId);
+      } catch (_) {}
+    }
+    return ids;
+  }
+
+  async function connectWallet() {
+    if (!window.ethereum) {
+      log("setupLog", "No wallet.");
+      return;
+    }
+    await switchChain();
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    bindMarket();
+    els.postAllBtn.disabled = false;
+    els.connectBtn.textContent = "Connected";
+    log("setupLog", "Signer: " + (await signer.getAddress()));
+  }
+
+  async function postAllTasks() {
+    if (!signer || !market) {
+      log("setupLog", "Connect wallet first.");
+      return;
+    }
+    bindMarket();
+    const mAddr = els.marketAddr.value.trim();
+    if (!ethers.isAddress(mAddr)) {
+      log("setupLog", "Invalid marketplace.");
+      return;
+    }
+    const contract = new ethers.Contract(mAddr, MARKET_ABI, signer);
+
+    gridN = Math.max(2, Math.min(12, parseInt(els.gridN.value, 10) || 4));
+    tilePx = Math.max(8, Math.min(128, parseInt(els.tilePx.value, 10) || 48));
+    const maxIter = Math.max(16, Math.min(2048, parseInt(els.maxIter.value, 10) || 128));
+    const cx = parseFloat(els.centerRe.value) || 0;
+    const cy = parseFloat(els.centerIm.value) || 0;
+    const scale = parseFloat(els.viewScale.value) || 3;
+    const reward = ethers.parseEther(els.rewardEth.value || "0");
+    if (reward <= 0n) {
+      log("setupLog", "Reward must be > 0.");
+      return;
+    }
+
+    const dlMRaw = parseInt(els.deadlineMins.value, 10);
+    const refMRaw = parseInt(els.refundMinsAfter.value, 10);
+    const dlM = Math.max(5, Number.isFinite(dlMRaw) && dlMRaw > 0 ? dlMRaw : 60);
+    const refM = Math.max(1, Number.isFinite(refMRaw) && refMRaw > 0 ? refMRaw : 1440);
+    const head = await provider.getBlock("latest");
+    const chainTs = BigInt(head.timestamp);
+    const wallTs = BigInt(Math.floor(Date.now() / 1000));
+    const basisTs = chainTs > wallTs ? chainTs : wallTs;
+    const slack = 900n;
+    const deadline = basisTs + BigInt(dlM) * 60n + slack;
+    const refundDl = deadline + BigInt(refM) * 60n;
+
+    const tw = tilePx;
+    const th = tilePx;
+    const totalTiles = gridN * gridN;
+    tileJobs = [];
+    drawnTiles.clear();
+    demoFinished = false;
+    totalRewardWei = reward * BigInt(totalTiles);
+    demoStartTs = Date.now();
+    firstPostTs = 0;
+    lastFinalizeTs = 0;
+
+    els.postAllBtn.disabled = true;
+    const useBatch = els.postModeBatch.checked;
+    const batchAddr = els.batchPosterAddr.value.trim();
+    if (useBatch && !ethers.isAddress(batchAddr)) {
+      log("setupLog", "Batch mode: paste a valid MarketplaceBatchPoster address (deploy log).");
+      els.postAllBtn.disabled = false;
+      return;
+    }
+
+    log("setupLog", (useBatch ? "Batch: " : "Sequential: ") + "posting " + totalTiles + " tiles…");
+
+    try {
+      if (useBatch) {
+        const batchRead = new ethers.Contract(batchAddr, BATCH_ABI, provider);
+        const linked = await batchRead.marketplace();
+        if (linked.toLowerCase() !== mAddr.toLowerCase()) {
+          throw new Error(
+            "Batch contract points at marketplace " + linked + " but the form has " + mAddr + " — use addresses from the same deploy."
+          );
+        }
+        const rows = [];
+        for (let j = 0; j < gridN; j++) {
+          for (let i = 0; i < gridN; i++) {
+            const rgba = renderTileRGBA(i, j, gridN, tw, th, cx, cy, scale, maxIter);
+            const b64 = bytesToBase64(rgba);
+            const payloadObj = {
+              type: "hash",
+              demo: "mandelbrot",
+              tile: [i, j],
+              grid: gridN,
+              tw,
+              th,
+              cx,
+              cy,
+              scale,
+              maxIter,
+              input: b64,
+            };
+            const payloadBytes = ethers.toUtf8Bytes(JSON.stringify(payloadObj));
+            const h = ethers.keccak256(ethers.toUtf8Bytes(b64));
+            const vParamsHex = ethers.AbiCoder.defaultAbiCoder().encode(["bytes32"], [h]);
+            rows.push({
+              spec: {
+                useRegistry: true,
+                verifier: ethers.ZeroAddress,
+                verifierName: "hash",
+                payload: payloadBytes,
+                verificationParams: ethers.getBytes(vParamsHex),
+                reward,
+              },
+              ord: { i, j, tw, th },
+            });
+          }
+        }
+        let chunks = chunkRowsByCalldata(rows);
+        chunks = subdivideChunks(chunks, MAX_TILES_PER_POSTBATCH);
+        log(
+          "setupLog",
+          "Batch: " +
+            chunks.length +
+            " postBatch txs (max " +
+            MAX_TILES_PER_POSTBATCH +
+            " Mandelbrot tiles each — larger batches OOG / RPC empty-revert on big payloads)."
+        );
+        const batchC = new ethers.Contract(batchAddr, BATCH_ABI, signer);
+        firstPostTs = Date.now();
+        for (let ci = 0; ci < chunks.length; ci++) {
+          const ch = chunks[ci];
+          const hNow = await provider.getBlock("latest");
+          const cTs = BigInt(hNow.timestamp);
+          const wTs = BigInt(Math.floor(Date.now() / 1000));
+          const basis = cTs > wTs ? cTs : wTs;
+          const dDl = basis + BigInt(dlM) * 60n + slack;
+          const rDl = dDl + BigInt(refM) * 60n;
+          const specs = ch.map((r) => ({
+            ...r.spec,
+            deadline: dDl,
+            refundDeadline: rDl,
+          }));
+          const chunkVal = reward * BigInt(ch.length);
+          log("setupLog", "postBatch " + (ci + 1) + "/" + chunks.length + " (" + ch.length + " tiles)…");
+          try {
+            await batchC.postBatch.staticCall(specs, { value: chunkVal });
+          } catch (pe) {
+            throw new Error("postBatch simulation failed (fix this before sending): " + formatCallErr(pe));
+          }
+          const txOpts = { value: chunkVal };
+          try {
+            const est = await batchC.postBatch.estimateGas(specs, { value: chunkVal });
+            let gasLimit = est + (est >> 1n) + 500_000n;
+            const cap = 30_000_000n;
+            if (gasLimit > cap) gasLimit = cap;
+            txOpts.gasLimit = gasLimit;
+            log("setupLog", "gasLimit≈" + gasLimit.toString());
+          } catch (ge) {
+            log("setupLog", "estimateGas failed after OK staticCall: " + formatCallErr(ge));
+            txOpts.gasLimit = 30_000_000n;
+          }
+          const tx = await batchC.postBatch(specs, txOpts);
+          log("setupLog", "Pending… " + tx.hash);
+          const receipt = await tx.wait();
+          const ok = receipt.status === 1 || receipt.status === 1n;
+          if (!ok) {
+            throw new Error(
+              "postBatch reverted (no tasks mined). Usually out-of-gas: shrink tile px / grid, or use sequential mode."
+            );
+          }
+          const ids = taskIdsFromReceipt(receipt, mAddr);
+          if (ids.length !== ch.length) {
+            throw new Error("Chunk " + (ci + 1) + ": wanted " + ch.length + " TaskPosted logs, got " + ids.length);
+          }
+          for (let k = 0; k < ids.length; k++) {
+            const ord = ch[k].ord;
+            tileJobs.push({ taskId: ids[k], ...ord });
+            log("setupLog", "Tile (" + ord.i + "," + ord.j + ") taskId=" + ids[k].toString());
+          }
+        }
+      } else {
+        for (let j = 0; j < gridN; j++) {
+          for (let i = 0; i < gridN; i++) {
+            const rgba = renderTileRGBA(i, j, gridN, tw, th, cx, cy, scale, maxIter);
+            const b64 = bytesToBase64(rgba);
+            const payloadObj = {
+              type: "hash",
+              demo: "mandelbrot",
+              tile: [i, j],
+              grid: gridN,
+              tw,
+              th,
+              cx,
+              cy,
+              scale,
+              maxIter,
+              input: b64,
+            };
+            const payloadBytes = ethers.toUtf8Bytes(JSON.stringify(payloadObj));
+            const h = ethers.keccak256(ethers.toUtf8Bytes(b64));
+            const vParams = ethers.AbiCoder.defaultAbiCoder().encode(["bytes32"], [h]);
+
+            const tx = await contract.postTaskWithRegisteredVerifier(
+              payloadBytes,
+              "hash",
+              vParams,
+              deadline,
+              refundDl,
+              { value: reward }
+            );
+            if (firstPostTs === 0) firstPostTs = Date.now();
+            const receipt = await tx.wait();
+            let taskId = null;
+            for (const logR of receipt.logs) {
+              try {
+                const parsed = contract.interface.parseLog(logR);
+                if (parsed && parsed.name === "TaskPosted") {
+                  taskId = parsed.args.taskId;
+                  break;
+                }
+              } catch (_) {}
+            }
+            if (taskId == null) {
+              const idsOne = taskIdsFromReceipt(receipt, mAddr);
+              if (idsOne.length) taskId = idsOne[0];
+            }
+            if (taskId == null) throw new Error("Could not parse taskId for tile " + i + "," + j);
+            tileJobs.push({ taskId, i, j, tw, th });
+            log("setupLog", "Posted tile (" + i + "," + j + ") taskId=" + taskId.toString());
+          }
+        }
+      }
+    } catch (e) {
+      const data =
+        (e && e.data) || (e && e.info && e.info.error && e.info.error.data) || "";
+      const decoded = explainRevertData(data);
+      log(
+        "setupLog",
+        "Error: " + (e.reason || e.shortMessage || e.message || e) + decoded
+      );
+      els.postAllBtn.disabled = false;
+      return;
+    }
+
+    els.setupPanel.hidden = true;
+    els.livePanel.hidden = false;
+    setState("Live");
+    drawPlaceholderCanvas();
+    log("liveLog", "Polling tasks…");
+    els.postAllBtn.disabled = false;
+    startPolling();
+  }
+
+  async function refreshLive() {
+    if (!market || tileJobs.length === 0) return;
+    bindMarket();
+    const m = new ethers.Contract(els.marketAddr.value.trim(), MARKET_ABI, provider);
+    let doneOk = 0;
+    for (const job of tileJobs) {
+      const key = job.taskId.toString();
+      if (drawnTiles.has(key)) {
+        doneOk++;
+        continue;
+      }
+      try {
+        const t = await m.getTask(job.taskId);
+        const st = Number(t.status);
+        if (st !== 2) continue;
+
+        const raw = normalizeBytes(t.submittedResult);
+        if (!raw || raw.length === 0) continue;
+
+        let utf8 = "";
+        try {
+          utf8 = new TextDecoder("utf-8", { fatal: false }).decode(raw).trim();
+        } catch (_) {
+          continue;
+        }
+        if (!utf8) continue;
+
+        let u8;
+        try {
+          u8 = base64ToBytes(utf8);
+        } catch (e) {
+          log("liveLog", "tile decode base64 failed task " + key + ": " + (e && e.message));
+          continue;
+        }
+        const need = job.tw * job.th * 4;
+        if (u8.length < need) {
+          log("liveLog", "tile " + key + " bytes " + u8.length + " need " + need);
+          continue;
+        }
+
+        blitTileRGBA(job.i, job.j, job.tw, job.th, u8);
+        drawnTiles.add(key);
+        doneOk++;
+        lastFinalizeTs = Date.now();
+      } catch (e) {
+        log("liveLog", "poll task " + key + ": " + (e && e.message));
+      }
+    }
+
+    const pct = Math.round((100 * doneOk) / tileJobs.length);
+    els.progressFill.style.width = pct + "%";
+    els.liveStats.textContent =
+      doneOk + " / " + tileJobs.length + " tiles drawn · " + pct + "%";
+
+    if (doneOk >= tileJobs.length && !demoFinished) {
+      stopPolling();
+      showDone();
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    void refreshLive();
+    pollTimer = setInterval(() => void refreshLive(), 700);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  function showDone() {
+    if (demoFinished) return;
+    demoFinished = true;
+    setState("Done");
+    els.livePanel.hidden = true;
+    els.donePanel.hidden = false;
+    const elapsedSec = lastFinalizeTs && firstPostTs
+      ? Math.round((lastFinalizeTs - firstPostTs) / 1000)
+      : 0;
+    const paid = ethers.formatEther(totalRewardWei);
+    els.doneSummary.innerHTML =
+      "<p>Total ETH escrow paid to workers (on successful finalizations): <span>" +
+      paid +
+      " ETH</span></p>" +
+      "<p>Wall time from first post to last drawn tile (browser clock): <span>" +
+      elapsedSec +
+      " s</span></p>" +
+      "<p>Tiles: <span>" +
+      tileJobs.length +
+      "</span> · Grid: <span>" +
+      gridN +
+      "×" +
+      gridN +
+      "</span></p>";
+    els.canvasHostDone.innerHTML = "";
+    els.canvasHostDone.appendChild(copyCanvasForDone(els.fractalCanvas));
+  }
+
+  els.connectBtn.addEventListener("click", connectWallet);
+  els.postAllBtn.addEventListener("click", postAllTasks);
+  els.saveCfgBtn.addEventListener("click", saveCfg);
+  els.pollBtn.addEventListener("click", refreshLive);
+
+  loadCfg();
+  bindMarket();
+})();
+  </script>
+</body>
+</html>

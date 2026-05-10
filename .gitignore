@@ -2,10 +2,8 @@
 cache/
 out/
 
-# Local Anvil / dry-run broadcasts only — Sepolia (11155111) etc. stay committable if you want deploy history
-!/broadcast
-/broadcast/*/31337/
-/broadcast/**/dry-run/
+# Foundry deployment logs/cache (regenerated; may contain local run metadata)
+broadcast/
 
 # Secrets — keep `.env.example` in git as a template
 .env
@@ -15,10 +13,28 @@ out/
 # Coverage (from `forge coverage`)
 coverage/
 lcov.info
+.gas-snapshot
 
 # OS noise
 .DS_Store
 
+# Python worker local/generated files
+worker/venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local notes and submission archives
+DEMO.md
+*.zip
+*.tar
+*.tar.gz
+
 # Track these for reproducible builds (do NOT gitignore):
 #   lib/          — vendored deps (e.g. forge-std); others run `forge install` if missing
 #   foundry.lock  — pins dependency versions (like Cargo.lock)
+
+*.pdf
